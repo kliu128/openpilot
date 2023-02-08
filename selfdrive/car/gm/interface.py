@@ -60,11 +60,23 @@ class CarInterface(CarInterfaceBase):
     ret.longitudinalTuning.kpBP = [5., 35.]
     ret.longitudinalTuning.kiBP = [0.]
 
-    if candidate in CAMERA_ACC_CAR:
-      ret.experimentalLongitudinalAvailable = candidate not in CC_ONLY_CAR
+    if candidate in CC_ONLY_CAR:
+      ret.experimentalLongitudinalAvailable = False  # TODO: redneck ACC
       ret.networkLocation = NetworkLocation.fwdCamera
       ret.radarOffCan = True  # no radar
-      ret.pcmCruise = True
+      ret.pcmCruise = False
+      ret.safetyConfigs[0].safetyParam |= Panda.FLAG_GM_HW_CAM
+      ret.minEnableSpeed = -1
+
+      if experimental_long:  # TODO: redneck ACC
+        ret.openpilotLongitudinalControl = True
+        ret.pcmCruise = True
+
+    elif candidate in CAMERA_ACC_CAR:
+      ret.experimentalLongitudinalAvailable = True
+      ret.networkLocation = NetworkLocation.fwdCamera
+      ret.radarOffCan = True  # no radar
+      ret.pcmCruise = True  # TODO: Panda flag for pcmCruise
       ret.safetyConfigs[0].safetyParam |= Panda.FLAG_GM_HW_CAM
       ret.minEnableSpeed = 5 * CV.KPH_TO_MS
 
