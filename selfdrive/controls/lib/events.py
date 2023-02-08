@@ -318,6 +318,11 @@ def modeld_lagging_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubM
 
 def wrong_car_mode_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int) -> Alert:
   text = "Cruise Mode Disabled"
+  if CP.carName == "gm":
+    from selfdrive.car.gm.values import CC_ONLY_CAR
+    if CP.carFingerprint in CC_ONLY_CAR:
+      if not CP.enableGasInterceptor:
+        text = "Turn CC Off For Manual Gas/Brake"
   if CP.carName == "honda":
     text = "Main Switch Off"
   return NoEntryAlert(text)

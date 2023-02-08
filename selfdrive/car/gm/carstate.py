@@ -102,6 +102,8 @@ class CarState(CarStateBase):
     ret.accFaulted = pt_cp.vl["AcceleratorPedal2"]["CruiseState"] == AccState.FAULTED
     if self.CP.carFingerprint in CC_ONLY_CAR:
       ret.accFaulted = False
+      # TODO: Detect OP long
+      ret.cruiseState.available = not ret.cruiseState.available
 
     ret.cruiseState.enabled = pt_cp.vl["AcceleratorPedal2"]["CruiseState"] != AccState.OFF
     ret.cruiseState.standstill = pt_cp.vl["AcceleratorPedal2"]["CruiseState"] == AccState.STANDSTILL
