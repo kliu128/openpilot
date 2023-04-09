@@ -117,8 +117,20 @@ def split_name(name: str) -> Tuple[str, str, str]:
 
 @dataclass
 class CarInfo:
+  # make + model + model years
   name: str
+
+  # Example for Toyota Corolla MY20
+  # requirements: Lane Tracing Assist (LTA) and Dynamic Radar Cruise Control (DRCC)
+  # US Market reference: "All", since all Corolla in the US come standard with LTA and DRCC
+
+  # the simplest description of the requirements for the US market
   package: str
+
+  # the minimum compatibility requirements for this model, regardless
+  # of market. can be a package, trim, or list of features
+  requirements: Optional[str] = None
+
   video_link: Optional[str] = None
   footnotes: List[Enum] = field(default_factory=list)
   min_steer_speed: Optional[float] = None
@@ -203,6 +215,13 @@ class CarInfo:
 
       if self.row[Column.STEERING_TORQUE] != Star.FULL:
         sentence_builder += " This car may not be able to take tight turns on its own."
+
+      # experimental mode
+      exp_link = "<a href='https://blog.comma.ai/090release/#experimental-mode' target='_blank' class='link-light-new-regular-text'>Experimental mode</a>"
+      if CP.openpilotLongitudinalControl or CP.experimentalLongitudinalAvailable:
+        sentence_builder += f" Traffic light and stop sign handling is also available in {exp_link}."
+      else:
+        sentence_builder += f" {exp_link}, with traffic light and stop sign handling, is not currently available for this car, but may be added in a future software update."
 
       return sentence_builder.format(car_model=f"{self.make} {self.model}", alc=alc, acc=acc)
 
