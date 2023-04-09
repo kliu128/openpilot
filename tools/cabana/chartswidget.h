@@ -1,89 +1,157 @@
 #pragma once
 
-#include <QComboBox>
-#include <QDialogButtonBox>
+#include <QGridLayout>
 #include <QLabel>
 #include <QListWidget>
+#include <QGraphicsPixmapItem>
 #include <QGraphicsProxyWidget>
-#include <QVBoxLayout>
+#include <QTabBar>
+#include <QTimer>
+#include <QUndoCommand>
+#include <QUndoStack>
 #include <QtCharts/QChartView>
+#include <QtCharts/QLegendMarker>
 #include <QtCharts/QLineSeries>
+#include <QtCharts/QScatterSeries>
 #include <QtCharts/QValueAxis>
 
-#include "tools/cabana/canmessages.h"
-#include "tools/cabana/dbcmanager.h"
-
+#include "tools/cabana/dbc/dbcmanager.h"
+#include "tools/cabana/streams/abstractstream.h"
 using namespace QtCharts;
 
+const int CHART_MIN_WIDTH = 300;
+
+enum class SeriesType {
+  Line = 0,
+  StepLine,
+  Scatter
+};
+
+class ValueTipLabel : public QLabel {
+public:
+  ValueTipLabel(QWidget *parent = nullptr);
+  void showText(const QPoint &pt, const QString &sec, int right_edge);
+  void paintEvent(QPaintEvent *ev) override;
+};
+
+class ChartsWidget;
 class ChartView : public QChartView {
   Q_OBJECT
 
 public:
-  ChartView(QWidget *parent = nullptr);
-  void addSeries(const QString &msg_id, const Signal *sig);
-  void removeSeries(const QString &msg_id, const Signal *sig);
-  bool hasSeries(const QString &msg_id, const Signal *sig) const;
-  void updateSeries(const Signal *sig = nullptr);
-  void setEventsRange(const std::pair<double, double> &range);
-  void setDisplayRange(double min, double max);
-  void setPlotAreaLeftPosition(int pos);
-  qreal getYAsixLabelWidth() const;
+  ChartView(const std::pair<double, double> &x_range, ChartsWidget *parent = nullptr);
+  void addSeries(const MessageId &msg_id, const cabana::Signal *sig);
+  bool hasSeries(const MessageId &msg_id, const cabana::Signal *sig) const;
+  void updateSeries(const cabana::Signal *sig = nullptr);
+  void updatePlot(double cur, double min, double max);
+  void setSeriesType(SeriesType type);
+  void updatePlotArea(int left, bool force = false);
+  void showTip(double sec);
+  void hideTip();
 
   struct SigItem {
-    QString msg_id;
-    uint8_t source = 0;
-    uint32_t address = 0;
-    const Signal *sig = nullptr;
-    QLineSeries *series = nullptr;
-    double min_y = 0;
-    double max_y = 0;
+    MessageId msg_id;
+    const cabana::Signal *sig = nullptr;
+    QXYSeries *series = nullptr;
     QVector<QPointF> vals;
+    QVector<QPointF> step_vals;
+    uint64_t last_value_mono_time = 0;
+    QPointF track_pt{};
+    SegmentTree segment_tree;
+    double min = 0;
+    double max = 0;
   };
 
 signals:
-  void seriesRemoved(const QString &id, const Signal *sig);
-  void seriesAdded(const QString &id, const Signal *sig);
+  void seriesRemoved(const MessageId &id, const cabana::Signal *sig);
+  void seriesAdded(const MessageId &id, const cabana::Signal *sig);
   void zoomIn(double min, double max);
-  void zoomReset();
+  void zoomUndo();
   void remove();
-  void axisYUpdated();
+  void axisYLabelWidthChanged(int w);
+  void hovered(double sec);
 
 private slots:
-  void msgRemoved(uint32_t address);
-  void msgUpdated(uint32_t address);
-  void signalUpdated(const Signal *sig);
-  void signalRemoved(const Signal *sig);
+  void signalUpdated(const cabana::Signal *sig);
   void manageSeries();
+  void handleMarkerClicked();
+  void msgUpdated(MessageId id);
+  void msgRemoved(MessageId id) { removeIf([=](auto &s) { return s.msg_id == id; }); }
+  void signalRemoved(const cabana::Signal *sig) { removeIf([=](auto &s) { return s.sig == sig; }); }
 
 private:
-  QList<ChartView::SigItem>::iterator removeSeries(const QList<ChartView::SigItem>::iterator &it);
+  void createToolButtons();
+  void mousePressEvent(QMouseEvent *event) override;
   void mouseReleaseEvent(QMouseEvent *event) override;
   void mouseMoveEvent(QMouseEvent *ev) override;
+  void dragEnterEvent(QDragEnterEvent *event) override;
+  void dragLeaveEvent(QDragLeaveEvent *event) override { drawDropIndicator(false); }
+  void dragMoveEvent(QDragMoveEvent *event) override;
+  void dropEvent(QDropEvent *event) override;
   void leaveEvent(QEvent *event) override;
   void resizeEvent(QResizeEvent *event) override;
+  QSize sizeHint() const override { return {CHART_MIN_WIDTH, settings.chart_height}; }
   void updateAxisY();
   void updateTitle();
-  void updateFromSettings();
+  void resetChartCache();
+  void paintEvent(QPaintEvent *event) override;
   void drawForeground(QPainter *painter, const QRectF &rect) override;
-  void applyNiceNumbers(qreal min, qreal max);
+  void drawBackground(QPainter *painter, const QRectF &rect) override;
+  void drawDropIndicator(bool draw) { if (std::exchange(can_drop, draw) != can_drop) viewport()->update(); }
+  std::tuple<double, double, int> getNiceAxisNumbers(qreal min, qreal max, int tick_count);
   qreal niceNumber(qreal x, bool ceiling);
+  QXYSeries *createSeries(SeriesType type, QColor color);
+  void updateSeriesPoints();
+  void removeIf(std::function<bool(const SigItem &)> predicate);
+  inline void clearTrackPoints() { for (auto &s : sigs) s.track_pt = {}; }
 
+  int y_label_width = 0;
+  int align_to = 0;
   QValueAxis *axis_x;
   QValueAxis *axis_y;
-  QPointF track_pt;
+  QGraphicsPixmapItem *move_icon;
   QGraphicsProxyWidget *close_btn_proxy;
   QGraphicsProxyWidget *manage_btn_proxy;
-  std::pair<double, double> events_range = {0, 0};
+  ValueTipLabel tip_label;
   QList<SigItem> sigs;
- };
+  double cur_sec = 0;
+  SeriesType series_type = SeriesType::Line;
+  bool is_scrubbing = false;
+  bool resume_after_scrub = false;
+  QPixmap chart_pixmap;
+  bool can_drop = false;
+  double tooltip_x = -1;
+  ChartsWidget *charts_widget;
+  friend class ChartsWidget;
+};
 
-class ChartsWidget : public QWidget {
+class ChartsContainer : public QWidget {
+public:
+  ChartsContainer(ChartsWidget *parent);
+  void dragEnterEvent(QDragEnterEvent *event) override;
+  void dropEvent(QDropEvent *event) override;
+  void dragLeaveEvent(QDragLeaveEvent *event) override { drawDropIndicator({}); }
+  void drawDropIndicator(const QPoint &pt) { drop_indictor_pos = pt; update(); }
+  void paintEvent(QPaintEvent *ev) override;
+  ChartView *getDropAfter(const QPoint &pos) const;
+
+  QGridLayout *charts_layout;
+  ChartsWidget *charts_widget;
+  QPoint drop_indictor_pos;
+};
+
+class ChartsWidget : public QFrame {
   Q_OBJECT
 
 public:
   ChartsWidget(QWidget *parent = nullptr);
-  void showChart(const QString &id, const Signal *sig, bool show, bool merge);
-  inline bool hasSignal(const QString &id, const Signal *sig) { return findChart(id, sig) != nullptr; }
+  void showChart(const MessageId &id, const cabana::Signal *sig, bool show, bool merge);
+  inline bool hasSignal(const MessageId &id, const cabana::Signal *sig) { return findChart(id, sig) != nullptr; }
+
+public slots:
+  void setColumnCount(int n);
+  void removeAll();
+  void setZoom(double min, double max);
 
 signals:
   void dock(bool floating);
@@ -91,50 +159,95 @@ signals:
   void seriesChanged();
 
 private:
+  void resizeEvent(QResizeEvent *event) override;
+  bool event(QEvent *event) override;
   void alignCharts();
+  void newChart();
+  ChartView *createChart();
   void removeChart(ChartView *chart);
   void eventsMerged();
   void updateState();
-  void updateDisplayRange();
   void zoomIn(double min, double max);
   void zoomReset();
+  void startAutoScroll();
+  void stopAutoScroll();
+  void doAutoScroll();
   void updateToolBar();
-  void removeAll();
-  void showAllData();
+  void setMaxChartRange(int value);
+  void updateLayout(bool force = false);
+  void settingChanged();
+  void showValueTip(double sec);
   bool eventFilter(QObject *obj, QEvent *event) override;
-  ChartView *findChart(const QString &id, const Signal *sig);
+  void newTab();
+  void removeTab(int index);
+  inline QList<ChartView *> &currentCharts() { return tab_charts[tabbar->tabData(tabbar->currentIndex()).toInt()]; }
+  ChartView *findChart(const MessageId &id, const cabana::Signal *sig);
 
   QLabel *title_label;
-  QLabel *range_label;
+  QLabel *range_lb;
+  LogSlider *range_slider;
+  QAction *range_lb_action;
+  QAction *range_slider_action;
   bool docking = true;
-  QAction *show_all_values_btn;
   QAction *dock_btn;
-  QAction *reset_zoom_btn;
+
+  QAction *undo_zoom_action;
+  QAction *redo_zoom_action;
+  QAction *reset_zoom_action;
+  QUndoStack *zoom_undo_stack;
+
   QAction *remove_all_btn;
-  QVBoxLayout *charts_layout;
   QList<ChartView *> charts;
+  std::unordered_map<int, QList<ChartView *>> tab_charts;
+  QTabBar *tabbar;
+  ChartsContainer *charts_container;
+  QScrollArea *charts_scroll;
   uint32_t max_chart_range = 0;
   bool is_zoomed = false;
-  std::pair<double, double> event_range;
   std::pair<double, double> display_range;
   std::pair<double, double> zoomed_range;
-  bool use_dark_theme = false;
+  QAction *columns_action;
+  int column_count = 1;
+  int current_column_count = 0;
+  int auto_scroll_count = 0;
+  QTimer auto_scroll_timer;
+  QTimer align_timer;
+  friend class ZoomCommand;
+  friend class ChartView;
+  friend class ChartsContainer;
+};
+
+class ZoomCommand : public QUndoCommand {
+public:
+  ZoomCommand(ChartsWidget *charts, std::pair<double, double> range) : charts(charts), range(range), QUndoCommand() {
+    prev_range = charts->is_zoomed ? charts->zoomed_range : charts->display_range;
+    setText(QObject::tr("Zoom to %1-%2").arg(range.first, 0, 'f', 1).arg(range.second, 0, 'f', 1));
+  }
+  void undo() override { charts->setZoom(prev_range.first, prev_range.second); }
+  void redo() override { charts->setZoom(range.first, range.second); }
+  ChartsWidget *charts;
+  std::pair<double, double> prev_range, range;
 };
 
 class SeriesSelector : public QDialog {
-  Q_OBJECT
-
 public:
-  SeriesSelector(QWidget *parent);
-  void addSeries(const QString &id, const QString& msg_name, const QString &sig_name);
-  QList<QStringList> series();
+  struct ListItem : public QListWidgetItem {
+    ListItem(const MessageId &msg_id, const cabana::Signal *sig, QListWidget *parent) : msg_id(msg_id), sig(sig), QListWidgetItem(parent) {}
+    MessageId msg_id;
+    const cabana::Signal *sig;
+  };
 
-private slots:
-  void msgSelected(int index);
-  void addSignal(QListWidgetItem *item);
+  SeriesSelector(QString title, QWidget *parent);
+  QList<ListItem *> seletedItems();
+  inline void addSelected(const MessageId &id, const cabana::Signal *sig) { addItemToList(selected_list, id, sig, true); }
 
 private:
+  void updateAvailableList(int index);
+  void addItemToList(QListWidget *parent, const MessageId id, const cabana::Signal *sig, bool show_msg_name = false);
+  void add(QListWidgetItem *item);
+  void remove(QListWidgetItem *item);
+
   QComboBox *msgs_combo;
-  QListWidget *sig_list;
-  QListWidget *chart_series;
+  QListWidget *available_list;
+  QListWidget *selected_list;
 };

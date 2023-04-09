@@ -50,14 +50,6 @@ void add_str(WINDOW *w, const char *str, Color color = Color::Default, bool bold
   if (color != Color::Default) wattroff(w, COLOR_PAIR(color));
 }
 
-std::string format_seconds(int s) {
-  int total_minutes = s / 60;
-  int seconds = s % 60;
-  int hours = total_minutes / 60;
-  int minutes = total_minutes % 60;
-  return util::string_format("%02d:%02d:%02d", hours, minutes, seconds);
-}
-
 }  // namespace
 
 ConsoleUI::ConsoleUI(Replay *replay, QObject *parent) : replay(replay), sm({"carState", "liveParameters"}), QObject(parent) {
@@ -173,12 +165,15 @@ void ConsoleUI::updateStatus() {
   sm.update(0);
 
   if (status != Status::Paused) {
-    status = (sm.updated("carState") || sm.updated("liveParameters")) ? Status::Playing : Status::Waiting;
+    auto events = replay->events();
+    uint64_t current_mono_time = replay->routeStartTime() + replay->currentSeconds() * 1e9;
+    bool playing = !events->empty() && events->back()->mono_time > current_mono_time;
+    status = playing ? Status::Playing : Status::Waiting;
   }
   auto [status_str, status_color] = status_text[status];
   write_item(0, 0, "STATUS:    ", status_str, "      ", false, status_color);
-  std::string suffix = " / " + format_seconds(replay->totalSeconds());
-  write_item(0, 25, "TIME:  ", format_seconds(replay->currentSeconds()), suffix, true);
+  std::string current_segment = " - " + std::to_string((int)(replay->currentSeconds() / 60));
+  write_item(0, 25, "TIME:  ", replay->currentDateTime().toString("ddd MMMM dd hh:mm:ss").toStdString(), current_segment, true);
 
   auto p = sm["liveParameters"].getLiveParameters();
   write_item(1, 0, "STIFFNESS: ", util::string_format("%.2f %%", p.getStiffnessFactor() * 100), "  ");
