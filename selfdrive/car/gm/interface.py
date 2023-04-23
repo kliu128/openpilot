@@ -218,7 +218,7 @@ class CarInterface(CarInterfaceBase):
       tire_stiffness_factor = 1.0
 
     elif candidate in (CAR.BOLT_EUV, CAR.BOLT_CC):
-      ret.mass = 1669. + STD_CARGO_KG
+      ret.mass = 1628. + STD_CARGO_KG
       ret.wheelbase = 2.63779
       ret.steerRatio = 16.8
       ret.centerToFront = ret.wheelbase * 0.4
@@ -255,11 +255,10 @@ class CarInterface(CarInterfaceBase):
       ret.pcmCruise = False
       ret.openpilotLongitudinalControl = True
       # Note: Low speed, stop and go not tested. Should be fairly smooth on highway
-      ret.longitudinalTuning.kpV = [0.4, 0.06]
+      ret.longitudinalTuning.kpV = [0.35, 0.5]
       ret.longitudinalTuning.kiBP = [0., 35.0]
-      ret.longitudinalTuning.kiV = [0.0, 0.04]
-      ret.longitudinalTuning.kiV = [0.0, 0.04]
-      ret.longitudinalTuning.kf = 0.3
+      ret.longitudinalTuning.kiV = [0.1, 0.1]
+      ret.longitudinalTuning.kf = 0.15
       ret.stoppingDecelRate = 0.8  # reach stopping target smoothly, brake_travel/s while trying to stop
       ret.vEgoStopping = 0.5  # Speed at which the car goes into stopping state, when car starts requesting stopping accel
       ret.vEgoStarting = 0.5  # Speed at which the car goes into starting state, when car starts requesting starting accel,
