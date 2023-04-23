@@ -259,6 +259,7 @@ class Tici(HardwareBase):
     return network_strength
 
   def get_network_metered(self, network_type) -> bool:
+    return False
     try:
       primary_connection = self.nm.Get(NM, 'PrimaryConnection', dbus_interface=DBUS_PROPS, timeout=TIMEOUT)
       primary_connection = self.bus.get_object(NM, primary_connection)
