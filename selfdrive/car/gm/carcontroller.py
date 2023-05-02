@@ -1,15 +1,19 @@
+import math
+
 from cereal import car
 from common.conversions import Conversions as CV
-from common.numpy_fast import interp
+from common.numpy_fast import interp, clip
 from common.realtime import DT_CTRL
 from opendbc.can.packer import CANPacker
-from selfdrive.car import apply_driver_steer_torque_limits
+from selfdrive.car import apply_driver_steer_torque_limits, create_gas_interceptor_command
 from selfdrive.car.gm import gmcan
 from selfdrive.car.gm.values import DBC, CanBus, CarControllerParams, CruiseButtons, CC_ONLY_CAR
 
 VisualAlert = car.CarControl.HUDControl.VisualAlert
 NetworkLocation = car.CarParams.NetworkLocation
 LongCtrlState = car.CarControl.Actuators.LongControlState
+GearShifter = car.CarState.GearShifter
+TransmissionType = car.CarParams.TransmissionType
 
 # Camera cancels up to 0.1s after brake is pressed, ECM allows 0.5s
 CAMERA_CANCEL_DELAY_FRAMES = 10
@@ -28,6 +32,7 @@ class CarController:
     self.last_steer_frame = 0
     self.last_button_frame = 0
     self.cancel_counter = 0
+    self.pedal_steady = 0.
 
     self.lka_steering_cmd_counter = 0
     self.lka_icon_status_last = (False, False)
@@ -105,8 +110,12 @@ class CarController:
           friction_brake_bus = CanBus.POWERTRAIN
 
         # GasRegenCmdActive needs to be 1 to avoid cruise faults. It describes the ACC state, not actuation
-        can_sends.append(gmcan.create_gas_regen_command(self.packer_pt, CanBus.POWERTRAIN, self.apply_gas, idx, CC.enabled, at_full_stop))
-        can_sends.append(gmcan.create_friction_brake_command(self.packer_ch, friction_brake_bus, self.apply_brake, idx, CC.enabled, near_stop, at_full_stop, self.CP))
+        if CS.CP.enableGasInterceptor:
+          can_sends.append(gmcan.create_gm_pedal_interceptor_command(self.packer_pt, CS, CC, actuators, idx))
+        else:
+          can_sends.append(gmcan.create_gas_regen_command(self.packer_pt, CanBus.POWERTRAIN, self.apply_gas, idx, CC.enabled, at_full_stop))
+        if self.CP.carFingerprint not in CC_ONLY_CAR:
+          can_sends.append(gmcan.create_friction_brake_command(self.packer_ch, friction_brake_bus, self.apply_brake, idx, CC.enabled, near_stop, at_full_stop, self.CP))
 
         # Send dashboard UI commands (ACC status)
         send_fcw = hud_alert == VisualAlert.fcw
