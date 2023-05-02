@@ -1,3 +1,5 @@
+import math
+
 from cereal import car
 from common.conversions import Conversions as CV
 from common.numpy_fast import interp
@@ -24,6 +26,7 @@ class CarController:
     self.apply_steer_last = 0
     self.apply_gas = 0
     self.apply_brake = 0
+    self.apply_speed = 0
     self.frame = 0
     self.last_steer_frame = 0
     self.last_button_frame = 0
@@ -104,8 +107,12 @@ class CarController:
           at_full_stop = at_full_stop and actuators.longControlState == LongCtrlState.stopping
           friction_brake_bus = CanBus.POWERTRAIN
 
-        # GasRegenCmdActive needs to be 1 to avoid cruise faults. It describes the ACC state, not actuation
-        can_sends.append(gmcan.create_gas_regen_command(self.packer_pt, CanBus.POWERTRAIN, self.apply_gas, idx, CC.enabled, at_full_stop))
+        if CS.CP.carFingerprint in CC_ONLY_CAR:
+          if (cmd := self.create_redneck_acc_command(CS, actuators)) is not None:
+            can_sends.append(cmd)
+        else:
+          # GasRegenCmdActive needs to be 1 to avoid cruise faults. It describes the ACC state, not actuation
+          can_sends.append(gmcan.create_gas_regen_command(self.packer_pt, CanBus.POWERTRAIN, self.apply_gas, idx, CC.enabled, at_full_stop))
         can_sends.append(gmcan.create_friction_brake_command(self.packer_ch, friction_brake_bus, self.apply_brake, idx, CC.enabled, near_stop, at_full_stop, self.CP))
 
         # Send dashboard UI commands (ACC status)
@@ -141,8 +148,10 @@ class CarController:
       if (self.frame - self.last_button_frame) * DT_CTRL > 0.04:
         if self.cancel_counter > CAMERA_CANCEL_DELAY_FRAMES:
           self.last_button_frame = self.frame
-          can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.CAMERA, CS.buttons_counter, CruiseButtons.CANCEL))
-
+          if self.CP.carFingerprint in CC_ONLY_CAR:
+            can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.POWERTRAIN, CS.buttons_counter, CruiseButtons.CANCEL))
+          else:
+            can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.CAMERA, CS.buttons_counter, CruiseButtons.CANCEL))
     if self.CP.networkLocation == NetworkLocation.fwdCamera and self.CP.carFingerprint not in CC_ONLY_CAR:
       # Silence "Take Steering" alert sent by camera, forward PSCMStatus with HandsOffSWlDetectionStatus=1
       if self.frame % 10 == 0:
@@ -167,6 +176,30 @@ class CarController:
     new_actuators.steerOutputCan = self.apply_steer_last
     new_actuators.gas = self.apply_gas
     new_actuators.brake = self.apply_brake
+    new_actuators.speed = self.apply_speed
 
     self.frame += 1
     return new_actuators, can_sends
+
+  def create_redneck_acc_command(self, CS, actuators):
+    cruiseBtn = CruiseButtons.INIT
+    # We will spam the up/down buttons till we reach the desired speed
+    # TODO: Apparently there are rounding issues.
+    speedSetPoint = int(round(CS.out.cruiseState.speed * CV.MS_TO_MPH))
+    speedActuator = math.floor(actuators.speed * CV.MS_TO_MPH)
+    speedDiff = (speedActuator - speedSetPoint)
+
+    # We will spam the up/down buttons till we reach the desired speed
+    rate = 0.64
+    if speedDiff < 0:
+      cruiseBtn = CruiseButtons.DECEL_SET
+      rate = 0.2
+    elif speedDiff > 0:
+      cruiseBtn = CruiseButtons.RES_ACCEL
+
+    # Check rlogs closely - our message shouldn't show up on the pt bus for us
+    # Or bus 2, since we're forwarding... but I think it does
+    # TODO: Cleanup the timing - normal is every 30ms...
+    if (cruiseBtn != CruiseButtons.INIT) and ((self.frame - self.last_button_frame) * DT_CTRL > rate):
+      self.last_button_frame = self.frame
+      return gmcan.create_buttons(self.packer_pt, CanBus.POWERTRAIN, CS.buttons_counter, cruiseBtn)
